@@ -13,20 +13,22 @@ The app.py script does several things:
 
 import argparse
 import logging
+import warnings
 
 # Imports needed for Clams and MMIF.
 # Non-NLP Clams applications will require AnnotationTypes
 
+from summarizer import TextSummarizer
 from clams import ClamsApp, Restifier
 from mmif import Mmif, View, Annotation, Document, AnnotationTypes, DocumentTypes
 
 # For an NLP tool we need to import the LAPPS vocabulary items
-from lapps.discriminators import Uri
 
 
-class TextSummarizer(ClamsApp):
+class BartSummarizer(ClamsApp):
 
     def __init__(self):
+        self.summarizer = TextSummarizer()
         super().__init__()
 
     def _appmetadata(self):
@@ -37,7 +39,30 @@ class TextSummarizer(ClamsApp):
 
     def _annotate(self, mmif: Mmif, **parameters) -> Mmif:
         # see https://sdk.clams.ai/autodoc/clams.app.html#clams.app.ClamsApp._annotate
-        raise NotImplementedError
+
+        # Register a new view of the bart-summarizer app
+        new_view = mmif.new_view()
+        self.sign_view(new_view, parameters)
+
+        views_contain_doc = mmif.get_all_views_contain(DocumentTypes.TextDocument)
+        if views_contain_doc:
+            view_to_summarize = views_contain_doc[-1]
+            for doc in view_to_summarize.get_documents():
+                self._run_bart(new_view, doc)
+        else:
+            other_docs = mmif.get_documents_by_type(DocumentTypes.TextDocument)
+            if other_docs:
+                for doc in other_docs:
+                    self._run_bart(new_view, doc)
+            else:
+                warnings.warn("No text documents found in the input MMIF. No summarization performed.")
+
+        return mmif
+
+    def _run_bart(self, view: View, doc: str) -> None:
+        summarized_text = view.new_textdocument(self.summarizer.summarize_text(doc.text_value))
+        new_alignment = view.new_annotation(at_type=AnnotationTypes.Alignment,
+                                           properties={'source': doc.long_id, 'target': summarized_text.long_id})
 
 def get_app():
     """
@@ -47,8 +72,7 @@ def get_app():
     """
     # for example:
     # return TextSummarizer(create, from, global, params)
-    raise NotImplementedError
-
+    return BartSummarizer()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
